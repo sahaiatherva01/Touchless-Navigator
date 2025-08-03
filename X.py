@@ -5,301 +5,321 @@ import time
 import math
 import numpy as np
 
+# --- System and PyAutoGUI Setup ---
 # Initialize camera
 cap = cv2.VideoCapture(0)
 if not cap.isOpened():
     print("Error: Could not open camera.")
     exit()
-cap.set(3, 640) # Set width
-cap.set(4, 480) # Set height
+cap.set(3, 640)  # Set width
+cap.set(4, 480)  # Set height
 
-# Initialize MediaPipe Hands
+# Get screen size for mapping
+screen_width, screen_height = pyautogui.size()
+pyautogui.FAILSAFE = True  # Allows cursor to move to screen edges
+pyautogui.PAUSE = 0.01         # No pause between PyAutoGUI calls
+
+# --- MediaPipe Hands Initialization ---
 mpHands = mp.solutions.hands
-hands = mpHands.Hands(max_num_hands=2, min_detection_confidence=0.8, min_tracking_confidence=0.8)
+hands = mpHands.Hands(
+    max_num_hands=2,
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.7
+)
 mpDraw = mp.solutions.drawing_utils
 
-# Screen size for mouse control
-screen_width, screen_height = pyautogui.size()
-pyautogui.FAILSAFE = False # Disable failsafe for edge movement
-pyautogui.PAUSE = 0 # No pause between PyAutoGUI calls
+# --- Gesture Control Parameters ---
+# General
+SMOOTHING = 0.2
+FRAME_REDUCTION = 100  # Reduces the active area for cursor control
+last_action_time = 0.0  # Last time an action was performed
+ACTION_COOLDOWN = 0.5  # Cooldown between different gesture actions
 
-# --- Gesture Parameters ---
-smooth_factor = 0.2
+# State variables
 prev_x, prev_y = 0, 0
-frameR = 100
+current_mode = "NONE"
 
-# NEW: Pinch-to-Drag/Select Parameters
-PINCH_THRESHOLD = 30 # Pixel distance between thumb and index to trigger pinch
-is_dragging = False  # State for pinch-drag
+# Cursor Mode
+cursor_active = False
 
-# Click Parameters
-start_hold_time = None
-click_flag = False
-REQUIRED_HOLD_DURATION = 1.0
+# Click Mode
+# We need to track if a click was already performed for the current gesture
+click_performed = False
 
-# Scrolling Parameters
-scroll_start_y = None
-SCROLL_THRESHOLD = 25
-SCROLL_AMOUNT = 100
-is_scrolling = False
+# Scroll Mode
+scroll_start_y = 0
+SCROLL_SENSITIVITY = 40  # Pixels hand must move to trigger a scroll
+SCROLL_AMOUNT = 100      # How much to scroll
+is_scrolling = False     # State for continuous scrolling
 
-# Alt-Tab Gesture Parameters
-alt_tab_mode = False
+# Volume Control
+volume_cooldown_active = False
+VOLUME_COOLDOWN = 0.3 # Cooldown to prevent rapid volume changes
+last_volume_change_time = 0
+
+# Alt-Tab Mode
+alt_tab_active = False
 alt_tab_start_x = 0
 ALT_TAB_SWIPE_THRESHOLD = 60
 was_in_cursor_mode = False
+ALT_TAB_SENSITIVITY = 70 # Pixels fist must move to switch tabs
 
-# Refined Zoom Gesture Parameters
+# Zoom Mode (Two Hands)
+zoom_mode_active = False
+ZOOM_TOGGLE_COOLDOWN = 1.5
+last_zoom_toggle_time = 0
+zoom_initial_dist = 0
 prev_zoom_dist, smoothed_zoom_dist = 0, 0
 ZOOM_SENSITIVITY = 5.0
 ZOOM_SMOOTH_FACTOR = 0.3
 ZOOM_COOLDOWN = 0.4
 last_zoom_time = 0
-zoom_mode_active = False
-ZOOM_TOGGLE_COOLDOWN = 1.5
-last_zoom_toggle_time = 0
 
-# Volume Control Parameters
-VOLUME_COOLDOWN = 0.3
-last_volume_change_time = 0
-
-def fingers_up(lmList, handedness):
-    """Determines which fingers are extended (up)."""
+# --- Helper Function ---
+def get_finger_status(lmList, handedness):
+    """
+    Determines which fingers are up or down.
+    Returns a list of 5 booleans (thumb, index, middle, ring, pinky).
+    """
     fingers = []
-    tips_ids = [4, 8, 12, 16, 20]
-    # Thumb Check
+    tip_ids = [4, 8, 12, 16, 20]
+    
+    # Thumb check (based on x-coordinate relative to wrist)
+    # This is a more robust check than comparing to the previous landmark
     if handedness == "Right":
-        if lmList[tips_ids[0]][1] < lmList[tips_ids[0] - 1][1]: fingers.append(1)
-        else: fingers.append(0)
-    else: # Left Hand
-        if lmList[tips_ids[0]][1] > lmList[tips_ids[0] - 1][1]: fingers.append(1)
-        else: fingers.append(0)
-    # Other 4 fingers
+        if lmList[tip_ids[0]][1] < lmList[tip_ids[0] - 2][1]:
+            fingers.append(1)
+        else:
+            fingers.append(0)
+    else:  # Left Hand
+        if lmList[tip_ids[0]][1] > lmList[tip_ids[0] - 2][1]:
+            fingers.append(1)
+        else:
+            fingers.append(0)
+            
+    # Four other fingers (based on y-coordinate)
     for id in range(1, 5):
-        if lmList[tips_ids[id]][2] < lmList[tips_ids[id] - 2][2]: fingers.append(1)
-        else: fingers.append(0)
+        if lmList[tip_ids[id]][2] < lmList[tip_ids[id] - 2][2]:
+            fingers.append(1)
+        else:
+            fingers.append(0)
+            
     return fingers
 
 def is_fist_detected(fingers):
-    """Checks for a fist."""
+    """
+    Checks for a fist by confirming the four main fingers are down.
+    """
+    # Fist is detected if index, middle, ring, and pinky fingers are all down (0)
+    # Thumb can be up or down for a fist, so we only check fingers[1:]
     return fingers[1:] == [0, 0, 0, 0]
 
+# --- Main Loop ---
 try:
     while True:
         success, img = cap.read()
         if not success:
-            print("Failed to grab frame")
-            break
+            print("Failed to capture frame.")
+            continue
+        
+        # Flip the image horizontally for a later selfie-view display
         img = cv2.flip(img, 1)
-        h, w, _ = img.shape
+        h, w, c = img.shape
+        
+        # Process the image and find hands
         imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         results = hands.process(imgRGB)
+        
         current_time = time.time()
+        
+        # Default mode if no hands or gestures are detected
+        new_mode = "NONE"
 
         if results.multi_hand_landmarks:
             num_hands = len(results.multi_hand_landmarks)
-
-            # TWO-HAND LOGIC
+            
+            # 🖐️🖐️ TWO-HAND GESTURE: ZOOM
             if num_hands == 2:
-                # Reset one-hand modes if two hands are detected
+                # If alt-tab mode was active, release alt key
                 if alt_tab_mode:
                     pyautogui.keyUp('alt')
                     alt_tab_mode = False
-                if is_dragging:
-                    pyautogui.mouseUp()
-                    is_dragging = False
-                was_in_cursor_mode = False
-
-                # Get landmarks and handedness for both hands
-                hand1_lms, hand2_lms = results.multi_hand_landmarks[0], results.multi_hand_landmarks[1]
-                handedness1 = results.multi_handedness[0].classification[0].label
-                handedness2 = results.multi_handedness[1].classification[0].label
+                was_in_cursor_mode = False # Reset cursor mode state
                 
-                lmList1, lmList2 = [], []
-                for id, lm in enumerate(hand1_lms.landmark):
-                    lmList1.append([id, int(lm.x * w), int(lm.y * h)])
-                for id, lm in enumerate(hand2_lms.landmark):
-                    lmList2.append([id, int(lm.x * w), int(lm.y * h)])
+                # Get landmarks for both hands
+                hand1_lms = results.multi_hand_landmarks[0]
+                hand2_lms = results.multi_hand_landmarks[1]
                 
+                # Draw landmarks for visualization
                 mpDraw.draw_landmarks(img, hand1_lms, mpHands.HAND_CONNECTIONS)
                 mpDraw.draw_landmarks(img, hand2_lms, mpHands.HAND_CONNECTIONS)
                 
-                fingers1, fingers2 = fingers_up(lmList1, handedness1), fingers_up(lmList2, handedness2)
-                
-                # Toggle Zoom Mode (both hands open)
+                lmList1 = [[id, int(lm.x * w), int(lm.y * h)] for id, lm in enumerate(hand1_lms.landmark)]
+                lmList2 = [[id, int(lm.x * w), int(lm.y * h)] for id, lm in enumerate(hand2_lms.landmark)]
+
+                fingers1 = get_finger_status(lmList1, results.multi_handedness[0].classification[0].label)
+                fingers2 = get_finger_status(lmList2, results.multi_handedness[1].classification[0].label)
+
+                # Both hands must be open to activate/use zoom
                 if fingers1 == [1, 1, 1, 1, 1] and fingers2 == [1, 1, 1, 1, 1]:
-                    if current_time - last_zoom_toggle_time > ZOOM_TOGGLE_COOLDOWN:
-                        zoom_mode_active = not zoom_mode_active
-                        last_zoom_toggle_time = current_time
-                        prev_zoom_dist, smoothed_zoom_dist = 0, 0 # Reset on toggle
-                
-                if zoom_mode_active:
-                    x1, y1 = lmList1[8][1], lmList1[8][2]
-                    x2, y2 = lmList2[8][1], lmList2[8][2]
-                    current_dist = math.hypot(x2 - x1, y2 - y1)
-                    
-                    if prev_zoom_dist == 0:
-                        prev_zoom_dist, smoothed_zoom_dist = current_dist, current_dist
+                    new_mode = "ZOOM"
+                    if not zoom_active:
+                        # Initialize zoom when gesture starts
+                        zoom_active = True
+                        ix1, iy1 = lmList1[8][1], lmList1[8][2]
+                        ix2, iy2 = lmList2[8][1], lmList2[8][2]
+                        zoom_initial_dist = math.hypot(ix2 - ix1, iy2 - iy1)
                     else:
-                        smoothed_zoom_dist += (current_dist - smoothed_zoom_dist) * ZOOM_SMOOTH_FACTOR
-                    
-                    if current_time - last_zoom_time > ZOOM_COOLDOWN:
-                        delta_dist = smoothed_zoom_dist - prev_zoom_dist
-                        if delta_dist > ZOOM_SENSITIVITY:
+                        # Continue zoom
+                        ix1, iy1 = lmList1[8][1], lmList1[8][2]
+                        ix2, iy2 = lmList2[8][1], lmList2[8][2]
+                        current_dist = math.hypot(ix2 - ix1, iy2 - iy1)
+                        
+                        cv2.line(img, (ix1, iy1), (ix2, iy2), (255, 0, 255), 3)
+
+                        # Calculate zoom factor
+                        zoom_factor = current_dist / zoom_initial_dist
+
+                        if zoom_factor > 1 + ZOOM_SENSITIVITY:
                             pyautogui.hotkey('ctrl', '+')
-                            prev_zoom_dist, last_zoom_time = smoothed_zoom_dist, current_time
-                        elif delta_dist < -ZOOM_SENSITIVITY:
+                            zoom_initial_dist = current_dist # Reset base distance
+                        elif zoom_factor < 1 - ZOOM_SENSITIVITY:
                             pyautogui.hotkey('ctrl', '-')
-                            prev_zoom_dist, last_zoom_time = smoothed_zoom_dist, current_time
-                    
-                    cv2.line(img, (x1, y1), (x2, y2), (255, 0, 255), 3)
-                    cv2.putText(img, "ZOOM ACTIVE", (50, 50), cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 0), 3)
+                            zoom_initial_dist = current_dist # Reset base distance
                 else:
-                    cv2.putText(img, "Show open hands to toggle zoom", (50, 50), cv2.FONT_HERSHEY_PLAIN, 2, (0, 0, 255), 3)
-            
-            # ONE-HAND LOGIC
+                    zoom_active = False
+
+            # 🖐️ ONE-HAND GESTURES
             elif num_hands == 1:
-                zoom_mode_active = False # Deactivate zoom with one hand
+                zoom_active = False # Deactivate zoom if only one hand is visible
+                hand_landmarks = results.multi_hand_landmarks[0]
+                mpDraw.draw_landmarks(img, hand_landmarks, mpHands.HAND_CONNECTIONS)
                 
-                handLms = results.multi_hand_landmarks[0]
+                lmList = [[id, int(lm.x * w), int(lm.y * h)] for id, lm in enumerate(hand_landmarks.landmark)]
                 handedness = results.multi_handedness[0].classification[0].label
+                fingers = get_finger_status(lmList, handedness)
                 
-                lmList = []
-                for id, lm in enumerate(handLms.landmark):
-                    lmList.append([id, int(lm.x * w), int(lm.y * h)])
+                # Get coordinates of the index finger tip for cursor/scroll
+                ix, iy = lmList[8][1], lmList[8][2]
                 
-                mpDraw.draw_landmarks(img, handLms, mpHands.HAND_CONNECTIONS)
+                # --- Gesture Recognition (Strict Hierarchy) ---
                 
-                if lmList:
-                    thumb_tip = lmList[4]
-                    index_tip = lmList[8]
-                    ix, iy = index_tip[1], index_tip[2]
-
-                    # --- 1. NEW: Pinch Gesture for Dragging (Highest Priority) ---
-                    distance = math.hypot(index_tip[1] - thumb_tip[1], index_tip[2] - thumb_tip[2])
-                    
-                    if distance < PINCH_THRESHOLD:
-                        # Reset other modes to prevent conflicts
-                        was_in_cursor_mode = False
-                        is_scrolling = False
-                        start_hold_time = None
-                        
-                        if not is_dragging:
-                            is_dragging = True
-                            pyautogui.mouseDown()
-                            
-                        # Move cursor while dragging
-                        screen_x = np.interp(ix, (frameR, w - frameR), (0, screen_width))
-                        screen_y = np.interp(iy, (frameR, h - frameR), (0, screen_height))
-                        smooth_x = prev_x + (screen_x - prev_x) * smooth_factor
-                        smooth_y = prev_y + (screen_y - prev_y) * smooth_factor
-                        pyautogui.moveTo(smooth_x, smooth_y)
-                        prev_x, prev_y = smooth_x, smooth_y
-
-                        # Visual Feedback for dragging
-                        cv2.circle(img, (ix, iy), 15, (0, 0, 255), cv2.FILLED)
-                        cv2.putText(img, "DRAGGING / SELECTING", (50, 50), cv2.FONT_HERSHEY_PLAIN, 2, (0, 0, 255), 3)
-
+                # 📜 SCROLL MODE: Index, Middle, Ring up
+                if fingers == [0, 1, 1, 1, 0]:
+                    new_mode = "SCROLL"
+                    if current_mode != "SCROLL":
+                        scroll_start_y = iy # Initialize scroll position
                     else:
-                        if is_dragging:
-                            pyautogui.mouseUp()
-                            is_dragging = False
+                        delta_y = iy - scroll_start_y
+                        if abs(delta_y) > SCROLL_SENSITIVITY:
+                            # Move hand UP to scroll DOWN (natural)
+                            pyautogui.scroll(-SCROLL_AMOUNT if delta_y < 0 else SCROLL_AMOUNT)
+                            scroll_start_y = iy # Reset position for continuous scroll
+                
+                # 👍 VOLUME UP: Thumb, Index, Middle up
+                elif fingers == [1, 1, 1, 0, 0]:
+                    new_mode = "VOLUME_UP"
+                    if current_mode != "VOLUME_UP": # Trigger once on gesture change
+                         pyautogui.press('volumeup')
+                
+                # 🤘 VOLUME DOWN: Thumb, Index, Pinky up
+                elif fingers == [1, 1, 0, 0, 1]:
+                    new_mode = "VOLUME_DOWN"
+                    if current_mode != "VOLUME_DOWN": # Trigger once on gesture change
+                        pyautogui.press('volumedown')
 
-                        # --- 2. Other Gestures (if not dragging) ---
-                        fingers = fingers_up(lmList, handedness)
-                        is_fist = is_fist_detected(fingers)
-                        
-                        # Alt-Tab (Fist)
-                        if is_fist and not alt_tab_mode and not was_in_cursor_mode:
-                            pyautogui.keyDown('alt')
+                # 🖱️ CLICK MODE: Index, Middle up
+                elif fingers == [0, 1, 1, 0, 0]:
+                    new_mode = "CLICK"
+                    if not click_performed and current_time - last_action_time > ACTION_COOLDOWN:
+                        pyautogui.click()
+                        click_performed = True # Prevent multiple clicks
+                        last_action_time = current_time
+
+                # 👆 CURSOR MODE: Index up
+                elif fingers == [0, 1, 0, 0, 0]:
+                    new_mode = "CURSOR"
+                    cursor_active = True
+                    # Convert coordinates to screen space
+                    screen_x = np.interp(ix, (FRAME_REDUCTION, w - FRAME_REDUCTION), (0, screen_width))
+                    screen_y = np.interp(iy, (FRAME_REDUCTION, h - FRAME_REDUCTION), (0, screen_height))
+                    
+                    # Smooth the movement
+                    smooth_x = prev_x + (screen_x - prev_x) * SMOOTHING
+                    smooth_y = prev_y + (screen_y - prev_y) * SMOOTHING
+                    
+                    pyautogui.moveTo(smooth_x, smooth_y)
+                    prev_x, prev_y = smooth_x, smooth_y
+                    cv2.circle(img, (ix, iy), 10, (255, 0, 255), cv2.FILLED)
+                
+                # ✊ ALT-TAB MODE: Fist
+                elif fingers == [0, 0, 0, 0, 0]:
+                    new_mode = "ALT_TAB"
+                    if not alt_tab_active:
+                        # Enter alt-tab mode
+                        alt_tab_active = True
+                        pyautogui.keyDown('alt')
+                        pyautogui.press('tab')
+                        alt_tab_start_x = lmList[9][1] # Use middle knuckle for stability
+                    else:
+                        # Navigate while in alt-tab mode
+                        current_x = lmList[9][1]
+                        delta_x = current_x - alt_tab_start_x
+                        if delta_x > ALT_TAB_SENSITIVITY:
                             pyautogui.press('tab')
-                            alt_tab_mode = True
-                            alt_tab_start_x = lmList[0][1]
-                        elif alt_tab_mode:
-                            if is_fist:
-                                delta_x = lmList[0][1] - alt_tab_start_x
-                                if delta_x > ALT_TAB_SWIPE_THRESHOLD:
-                                    pyautogui.press('tab')
-                                    alt_tab_start_x = lmList[0][1]
-                                elif delta_x < -ALT_TAB_SWIPE_THRESHOLD:
-                                    pyautogui.hotkey('shift', 'tab')
-                                    alt_tab_start_x = lmList[0][1]
-                                cv2.putText(img, "ALT-TAB MODE", (50, 50), cv2.FONT_HERSHEY_PLAIN, 2, (0, 0, 255), 3)
-                            else:
-                                pyautogui.keyUp('alt')
-                                alt_tab_mode = False
-                        else:
-                            # Cursor Mode (Index up)
-                            if fingers[1] == 1 and fingers[2:] == [0, 0, 0]:
-                                is_scrolling = False
-                                was_in_cursor_mode = True
-                                screen_x = np.interp(ix, (frameR, w - frameR), (0, screen_width))
-                                screen_y = np.interp(iy, (frameR, h - frameR), (0, screen_height))
-                                smooth_x = prev_x + (screen_x - prev_x) * smooth_factor
-                                smooth_y = prev_y + (screen_y - prev_y) * smooth_factor
-                                pyautogui.moveTo(smooth_x, smooth_y)
-                                prev_x, prev_y = smooth_x, smooth_y
-                                cv2.circle(img, (ix, iy), 10, (255, 0, 255), cv2.FILLED)
-                                cv2.putText(img, "CURSOR MODE", (50, 50), cv2.FONT_HERSHEY_PLAIN, 2, (255, 0, 255), 3)
+                            alt_tab_start_x = current_x
+                        elif delta_x < -ALT_TAB_SENSITIVITY:
+                            pyautogui.hotkey('shift', 'tab')
+                            alt_tab_start_x = current_x
 
-                            # Volume Up (Thumb, Index, Middle up)
-                            elif fingers[0:3] == [1, 1, 1] and fingers[3:] == [0, 0]:
-                                if current_time - last_volume_change_time > VOLUME_COOLDOWN:
-                                    pyautogui.press('volumeup')
-                                    last_volume_change_time = current_time
-                                cv2.putText(img, "VOLUME UP", (50, 50), cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 255), 3)
+        # --- State Management & Cleanup ---
+        # If the detected gesture is different from the previous frame's
+        if new_mode != current_mode:
+            # Release Alt key when exiting Alt-Tab mode
+            if current_mode == "ALT_TAB":
+                pyautogui.keyUp('alt')
+                alt_tab_active = False
+            
+            # Reset click flag when leaving click mode
+            if current_mode == "CLICK":
+                click_performed = False
 
-                            # Click/Scroll Mode (Index, Middle up)
-                            elif fingers[1] == 1 and fingers[2] == 1 and fingers[3:] == [0, 0]:
-                                was_in_cursor_mode = False
-                                if start_hold_time is None:
-                                    start_hold_time = current_time
-                                    scroll_start_y = iy
-                                    is_scrolling, click_flag = False, False
-                                
-                                delta_y = iy - scroll_start_y
-                                if is_scrolling or abs(delta_y) > SCROLL_THRESHOLD:
-                                    is_scrolling = True
-                                    pyautogui.scroll(SCROLL_AMOUNT if delta_y < 0 else -SCROLL_AMOUNT)
-                                    scroll_start_y = iy
-                                    cv2.putText(img, "SCROLLING", (50, 50), cv2.FONT_HERSHEY_PLAIN, 2, (255, 255, 0), 3)
-                                elif current_time - start_hold_time > REQUIRED_HOLD_DURATION and not click_flag:
-                                    pyautogui.click()
-                                    click_flag, start_hold_time = True, None
-                                    cv2.putText(img, "CLICKED!", (50, 50), cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 0), 3)
-                                else:
-                                    cv2.putText(img, "HOLD FOR CLICK / MOVE FOR SCROLL", (50, 50), cv2.FONT_HERSHEY_PLAIN, 1, (255, 255, 0), 2)
+            # Reset cursor active flag
+            cursor_active = (new_mode == "CURSOR")
+            
+            # Update the current mode for the next frame
+            current_mode = new_mode
+            last_action_time = current_time
 
+        # If no hands are detected, reset everything
+        if not results.multi_hand_landmarks:
+             if alt_tab_active:
+                pyautogui.keyUp('alt')
+                alt_tab_active = False
+             current_mode = "NONE"
+             zoom_active = False
+             click_performed = False
+             cursor_active = False
 
-                            # Volume Down (Thumb, Index, Pinky up)
-                            elif fingers == [1, 1, 0, 0, 1]:
-                                if current_time - last_volume_change_time > VOLUME_COOLDOWN:
-                                    pyautogui.press('volumedown')
-                                    last_volume_change_time = current_time
-                                cv2.putText(img, "VOLUME DOWN", (50, 50), cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 255), 3)
-
-                            else:
-                                was_in_cursor_mode, click_flag, start_hold_time, is_scrolling = False, False, None, False
-        else:
-            # Reset all states if no hands are detected
-            if alt_tab_mode: pyautogui.keyUp('alt')
-            if is_dragging: pyautogui.mouseUp()
-            alt_tab_mode, zoom_mode_active, is_scrolling, was_in_cursor_mode, is_dragging = False, False, False, False, False
-
+        # --- Display Information on Screen ---
+        cv2.rectangle(img, (10, 10), (350, 60), (0, 0, 0), cv2.FILLED)
+        display_text = f"MODE: {current_mode}"
+        cv2.putText(img, display_text, (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        
         cv2.imshow("Gesture Control", img)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-        
+
 except KeyboardInterrupt:
     print("Program interrupted by user.")
-except pyautogui.FailSafeException:
-    print("Fail-safe triggered by user. Exiting.")
 except Exception as e:
-    print(f"An error occurred: {e}")
-
+    print(f"An unexpected error occurred: {e}")
 finally:
-    # Ensure keys/mouse are released on exit
-    if alt_tab_mode: pyautogui.keyUp('alt')
-    if is_dragging: pyautogui.mouseUp()
+    # --- Cleanup ---
+    print("Cleaning up and closing...")
+    # Ensure any pressed keys are released on exit
+    if alt_tab_active:
+        pyautogui.keyUp('alt')
+    
     cap.release()
     cv2.destroyAllWindows()
