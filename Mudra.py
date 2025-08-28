@@ -60,10 +60,6 @@ def get_mudra_name(lmList):
     # Pataka Mudra: All fingers straight, close together.
     # We check if all fingers are up.
     if fingers == [1, 1, 1, 1, 1]:
-        # A more nuanced check for Pataka: distance between finger tips should be small.
-        # This is a basic way to check if fingers are together.
-        dist_index_pinky = math.hypot(lmList[8][1] - lmList[20][1], lmList[8][2] - lmList[20][2])
-        if dist_index_pinky < 80: # A small threshold
             return "Pataka"
 
     # Tripataka Mudra: Ring finger bent down.
@@ -85,9 +81,13 @@ def get_mudra_name(lmList):
 
     # Other common gestures from the original code that are not mudras
     if fingers == [0, 0, 0, 0, 0]:
-        return "Fist"
+        return "Mushti"
     if fingers == [0, 1, 0, 0, 0]:
-        return "Pointing"
+        return "Suchi"
+    if fingers == [1, 0, 0, 0, 0]:
+        return "Shikara"
+    if fingers == [0, 1, 1, 1, 0]:
+        return "Trishula"
     
     return "Unknown Mudra"
 
