@@ -88,6 +88,10 @@ def get_mudra_name(lmList):
         return "Shikara"
     if fingers == [0, 1, 1, 1, 0]:
         return "Trishula"
+    if fingers == [0, 1, 1, 0, 0]:
+        return "Ardhapataka"
+    if fingers == [1, 0, 0, 0, 1]:
+        return "Dhanu"
     
     return "Unknown Mudra"
 
