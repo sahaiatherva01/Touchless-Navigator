@@ -2,7 +2,6 @@ import cv2
 import time
 import math
 import numpy as np
-from collections import deque, Counter
 import mediapipe as mp
 
 # Install: pip install opencv-python mediapipe numpy
