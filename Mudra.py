@@ -1,202 +1,134 @@
 import cv2
+import mediapipe as mp
 import time
 import math
 import numpy as np
-import mediapipe as mp
 
-# Install: pip install opencv-python mediapipe numpy
-# Run: python mudras.py
-
-# ------------------ Camera ------------------
+# Initialize camera
 cap = cv2.VideoCapture(0)
 if not cap.isOpened():
-    raise SystemExit("Error: Could not open camera.")
-cap.set(3, 640)
-cap.set(4, 480)
+    print("Error: Could not open camera.")
+    exit()
+cap.set(3, 640) # Set width
+cap.set(4, 480) # Set height
 
-# ------------------ MediaPipe ------------------
-mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
+# Initialize MediaPipe Hands
+mpHands = mp.solutions.hands
+hands = mpHands.Hands(max_num_hands=1, min_detection_confidence=0.7, min_tracking_confidence=0.7)
+mpDraw = mp.solutions.drawing_utils
 
-hands = mp_hands.Hands(
-    static_image_mode=False,
-    max_num_hands=1,
-    model_complexity=1,
-    min_detection_confidence=0.75,
-    min_tracking_confidence=0.75,
-)
+# --- Mudra Identification Logic ---
 
-# ------------------ Helpers ------------------
+def fingers_up(lmList):
+    """
+    Determines which fingers are extended (up) based on MediaPipe landmarks.
+    """
+    fingers = []
+    # Thumb tip landmark is 4, base of thumb is 2.
+    # Check if thumb tip is to the right of its base (for right hand)
+    # or left of its base (for left hand).
+    if lmList[4][1] > lmList[3][1]:  # Assuming right hand by default
+        if lmList[4][1] > lmList[4][1]:
+            fingers.append(1)
+        else:
+            fingers.append(0)
+    else: # Assuming left hand
+        if lmList[4][1] < lmList[3][1]:
+            fingers.append(1)
+        else:
+            fingers.append(0)
 
-def euclid(ax, ay, bx, by):
-    return float(math.hypot(ax - bx, ay - by))
+    # For other 4 fingers, check if tip (8, 12, 16, 20) is above the first joint (6, 10, 14, 18)
+    tips_ids = [8, 12, 16, 20]
+    for id in tips_ids:
+        if lmList[id][2] < lmList[id - 2][2]:
+            fingers.append(1)
+        else:
+            fingers.append(0)
+    return fingers
 
+def get_mudra_name(lmList):
+    """
+    Identifies the mudra based on the hand landmarks and finger positions.
+    Returns the mudra name or 'Unknown'.
+    """
+    fingers = fingers_up(lmList)
 
-def fingers_up(lm, handedness_label: str):
-    # Returns [thumb, index, middle, ring, pinky] (1 if up)
-    up = []
-    thumb_tip_x = lm[4][1]
-    thumb_ip_x = lm[3][1]
-    # Handedness-aware thumb extension
-    if handedness_label == 'Right':
-        up.append(1 if thumb_tip_x > thumb_ip_x + 10 else 0)
-    else:
-        up.append(1 if thumb_tip_x < thumb_ip_x - 10 else 0)
-    # Other fingers: tip above PIP
-    tips = [8, 12, 16, 20]
-    pips = [6, 10, 14, 18]
-    for t, p in zip(tips, pips):
-        up.append(1 if lm[t][2] < lm[p][2] - 10 else 0)
-    return up
+    # A simple, rule-based approach to identify common mudras.
+    # This can be expanded with more complex logic or a trained model.
 
-
-def hand_span(lm):
-    # Use wrist(0) to middle_tip(12)
-    return euclid(lm[0][1], lm[0][2], lm[12][1], lm[12][2]) + 1e-6
-
-
-def close(a_idx, b_idx, lm, thr_px):
-    return euclid(lm[a_idx][1], lm[a_idx][2], lm[b_idx][1], lm[b_idx][2]) < thr_px
-
-
-def roughly_aligned_y(indices, lm, tol):
-    ys = [lm[i][2] for i in indices]
-    return (max(ys) - min(ys)) < tol
-
-
-def finger_gap_sum(indices, lm):
-    # Sum of adj fingertip gaps as spread proxy
-    total = 0.0
-    for i in range(len(indices) - 1):
-        a, b = indices[i], indices[i + 1]
-        total += euclid(lm[a][1], lm[a][2], lm[b][1], lm[b][2])
-    return total
-
-# ------------------ Rule-based mudras (10) ------------------
-# Names: Pataka, Tripataka, Ardhapataka, Mayura, Ardhachandra, Arala, Shukatunda,
-# Mushthi, Shikhara, Suchi (10)
-
-
-def classify_mudra(lm, handed):
-    up = fingers_up(lm, handed)
-    span = hand_span(lm)
-
-    near = 0.20 * span
-    near_small = 0.14 * span
-    align_y_tol = 0.12 * span
-
-    thumb_tip, index_tip, middle_tip, ring_tip, pinky_tip = 4, 8, 12, 16, 20
-
-    # Feature helpers
-    index_pinky_gap = euclid(lm[index_tip][1], lm[index_tip][2], lm[pinky_tip][1], lm[pinky_tip][2])
-    spread_total = finger_gap_sum([8, 12, 16, 20], lm)
-
-    # 1) Mayura: thumb and ring touch, index+middle up
-    if close(thumb_tip, ring_tip, lm, near) and up[1] == 1 and up[2] == 1:
-        return "Mayura"
-
-    # 2) Suchi: only index up
-    if up == [0, 1, 0, 0, 0]:
-        return "Suchi"
-
-    # 3) Mushthi: all down or almost down
-    if sum(up) <= 1:
-        return "Mushthi"
-
-    # 4) Shikhara: thumb up, others down
-    if up[0] == 1 and sum(up[1:]) == 0:
-        return "Shikhara"
-
-    # 5) Shukatunda: thumb-index close, middle slightly up, ring/pinky down
-    if close(thumb_tip, index_tip, lm, near_small) and up[1] == 1 and up[2] in (0, 1) and up[3] == 0 and up[4] == 0:
-        return "Shukatunda"
-
-    # 6) Arala: index slightly bent, others up; we approximate by index up & thumb up & small spread
-    if up[0] == 1 and up[1] == 1 and up[2] == 1 and up[3] == 1 and up[4] in (0, 1):
-        if spread_total < 1.3 * span and index_pinky_gap < 0.85 * span:
-            return "Arala"
-
-    # 7) Ardhachandra: all extended but thumb adducted near index, small spread
-    if up[1] == 1 and up[2] == 1 and up[3] == 1 and up[4] == 1:
-        if close(4, 8, lm, 0.28 * span) and roughly_aligned_y([8, 12, 16, 20], lm, align_y_tol) and spread_total < 1.5 * span:
-            return "Ardhachandra"
-
-    # 8) Ardhapataka: index+middle+ring up, pinky down (thumb free)
-    if up[1] == 1 and up[2] == 1 and up[3] == 1 and up[4] == 0:
-        return "Ardhapataka"
-
-    # 9) Tripataka: index+middle+pinky up, ring down (thumb free)
-    if up[1] == 1 and up[2] == 1 and up[3] == 0 and up[4] == 1:
-        return "Tripataka"
-
-    # 10) Pataka: all extended, aligned, not too spread
-    if up == [1, 1, 1, 1, 1] or (up[1] and up[2] and up[3] and up[4]):
-        if roughly_aligned_y([8, 12, 16, 20], lm, align_y_tol) and index_pinky_gap < 0.8 * span:
+    # Pataka Mudra: All fingers straight, close together.
+    # We check if all fingers are up.
+    if fingers == [1, 1, 1, 1, 1]:
+        # A more nuanced check for Pataka: distance between finger tips should be small.
+        # This is a basic way to check if fingers are together.
+        dist_index_pinky = math.hypot(lmList[8][1] - lmList[20][1], lmList[8][2] - lmList[20][2])
+        if dist_index_pinky < 80: # A small threshold
             return "Pataka"
 
-    return "Unknown"
+    # Tripataka Mudra: Ring finger bent down.
+    # Logic: Index, Middle, Pinky fingers up, Ring finger down.
+    if fingers == [1, 1, 1, 0, 1]:
+        return "Tripataka"
 
-# ------------------ Temporal smoothing / hysteresis ------------------
-SMOOTHING_WINDOW = 11
-COOLDOWN_SEC = 0.35
-CONFIRM_RATIO = 0.7  # proportion in window needed to confirm
-history = deque(maxlen=SMOOTHING_WINDOW)
-last_confirm_t = 0.0
-last_label = "..."
+    # Mayura Mudra: Thumb and ring finger touch.
+    # We check the distance between the tips of the thumb and ring finger.
+    dist_thumb_ring = math.hypot(lmList[4][1] - lmList[16][1], lmList[4][2] - lmList[16][2])
+    if dist_thumb_ring < 50: # Small distance means they are touching
+        return "Mayura"
+    
+    # Sukhaputaka Mudra: Index finger and thumb form a circle.
+    # We check the distance between the tips of the index finger and thumb.
+    dist_thumb_index = math.hypot(lmList[4][1] - lmList[8][1], lmList[4][2] - lmList[8][2])
+    if dist_thumb_index < 50:
+        return "Sukhaputaka"
 
-# ------------------ Main loop ------------------
+    # Other common gestures from the original code that are not mudras
+    if fingers == [0, 0, 0, 0, 0]:
+        return "Fist"
+    if fingers == [0, 1, 0, 0, 0]:
+        return "Pointing"
+    
+    return "Unknown Mudra"
+
 try:
     while True:
-        ok, frame = cap.read()
-        if not ok:
+        success, img = cap.read()
+        if not success:
+            print("Failed to grab frame")
             break
-        frame = cv2.flip(frame, 1)
-        h, w, _ = frame.shape
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = hands.process(rgb)
-
-        display = last_label
-        hud = []
+        
+        img = cv2.flip(img, 1) # Flip horizontally for mirror effect
+        h, w, _ = img.shape
+        imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        results = hands.process(imgRGB)
+        
+        mudra_name = "No Hand Detected"
 
         if results.multi_hand_landmarks:
-            hlm = results.multi_hand_landmarks[0]
-            handed = results.multi_handedness[0].classification[0].label if results.multi_handedness else 'Right'
+            handLms = results.multi_hand_landmarks[0]
+            
+            lmList = []
+            for id, lm in enumerate(handLms.landmark):
+                lmList.append([id, int(lm.x * w), int(lm.y * h)])
+            
+            mpDraw.draw_landmarks(img, handLms, mpHands.HAND_CONNECTIONS)
+            
+            # Identify the mudra
+            if lmList:
+                mudra_name = get_mudra_name(lmList)
 
-            lm = []
-            for idx, p in enumerate(hlm.landmark):
-                lm.append([idx, int(p.x * w), int(p.y * h)])
-
-            mp_drawing.draw_landmarks(frame, hlm, mp_hands.HAND_CONNECTIONS)
-
-            pred = classify_mudra(lm, handed)
-            history.append(pred)
-
-            # Confirm only if class dominates the window
-            if len(history) == history.maxlen:
-                most, cnt = Counter(history).most_common(1)[0]
-                now = time.time()
-                if most != "Unknown" and cnt >= int(CONFIRM_RATIO * SMOOTHING_WINDOW) and (now - last_confirm_t) >= COOLDOWN_SEC:
-                    display = most
-                    last_label = display
-                    last_confirm_t = now
-
-            hud.append(f"Hand: {handed}")
-        else:
-            history.clear()
-
-        cv2.putText(frame, f"Mudra: {display}", (12, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (40, 180, 240), 2)
-        y0 = 74
-        for line in hud:
-            cv2.putText(frame, line, (12, y0), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (160, 220, 80), 2)
-            y0 += 28
-
-        cv2.imshow("Sattriya Mudra Recognition (Rule-based, 10 classes)", frame)
-        if (cv2.waitKey(1) & 0xFF) == ord('q'):
+        # Display the identified mudra name on the screen
+        cv2.putText(img, f"Mudra: {mudra_name}", (50, 50), cv2.FONT_HERSHEY_PLAIN, 2, (255, 255, 0), 3)
+        
+        cv2.imshow("Mudra Identifier", img)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
 except KeyboardInterrupt:
-    pass
+    print("Program interrupted by user.")
+except Exception as e:
+    print(f"An error occurred: {e}")
 finally:
     cap.release()
-    hands.close()
     cv2.destroyAllWindows()
