@@ -4,32 +4,31 @@ import time
 import math
 import numpy as np
 
-# --- Data for Mudras ---
+# --- Data for Mudras (Updated with Detailed Descriptions) ---
 mudra_descriptions = {
-    "Mukula": {"desc": "Represents a bud, particularly a lotus bud or a water lily."},
-    "Kataka Mukha": {"desc": "Often used to hold flowers, play the flute, or represent a bird's head."},
-    "Alapadma": {"desc": "Represents a fully bloomed lotus, fruits, beauty, or a circular shape."},
-    "Simhamukha": {"desc": "Represents a lion's face, often used to show courage or power."},
-    "Sandamsa": {"desc": "Represents grasping, pincers, tweezers, or drawing something out."},
-    "Chandrakala": {"desc": "Represents the crescent moon, often seen on Lord Shiva's head."},
-    "Chatura": {"desc": "Represents cleverness, musk, a small quantity, or breaking things."},
-    "Shukatunda": {"desc": "Represents a parrot's beak or the act of shooting an arrow."},
-    "Kartarimukha": {"desc": "Represents scissors, separation, the corner of an eye, or two different things."},
-    "Mrigashirsha": {"desc": "Represents the head of a deer, often used to show animals or costumes."},
-    "Ardhachandra": {"desc": "Represents a half-moon, often used to show the sky or a large object."},
-    "Pataka": {"desc": "The foundational 'flag' gesture, used to represent many things like blessings or stopping."},
-    "Hamsasya": {"desc": "Represents a swan's beak, softness, tying a knot, or giving instruction."},
-    "Tripataka": {"desc": "A variation of Pataka, often used for crowns, trees, or drawing lines."},
-    "Mayura": {"desc": "Represents a peacock's beak or neck, or the act of writing."},
-    "Suchimukha": {"desc": "Represents a needle, the number one, pointing, or demonstration."},
-    "Shikara": {"desc": "Represents a peak, a spire, a 'thumbs-up', or the act of holding a bow."},
-    "Trishula": {"desc": "Represents a trident, a symbol of Lord Shiva, or the number three."},
-    "Ardhapataka": {"desc": "Represents a knife, dagger, tower, or the number two."},
-    "Arala": {"desc": "Represents drinking poison or nectar, or a violent wind."},
-    "Bhramara": {"desc": "Represents a bee, yoga, a wing, or the act of plucking flowers."},
-    "Padmakosha": {"desc": "Represents a lotus bud, fruit, or a ball-like object."},
-    "Mushti": {"desc": "The standard fist, representing steadiness, grasping, or combat."}
-    
+    "Mukula": {"desc": "Meaning 'bud.' Represents a water lily or lotus bud, the act of eating, or worship. Formed by bringing all five fingertips together."},
+    "Kataka Mukha": {"desc": "Meaning 'opening of a bracelet.' Used to show plucking flowers, holding a necklace, or drawing a bowstring. Formed by joining the index, middle finger, and thumb."},
+    "Alapadma": {"desc": "Meaning 'full-blown lotus.' Represents a bloomed lotus, fruits like an apple, beauty, or asking a question. Formed by fanning out all fingers."},
+    "Simhamukha": {"desc": "Meaning 'lion's face.' Represents a lion, courage, strength, or a pearl. Formed by touching the middle and ring fingers to the thumb."},
+    "Sandamsa": {"desc": "Meaning 'pincers.' Represents grasping with precision, plucking, or drawing something out. Formed by bringing the thumb and index finger together."},
+    "Chandrakala": {"desc": "Meaning 'crescent moon.' Represents the moon on Lord Shiva's head or one's face. Formed by extending the thumb and index finger into an 'L' shape."},
+    "Chatura": {"desc": "Meaning 'clever' or 'square.' Represents musk, a small quantity, or cleverness. Formed with all fingers extended except the pinky, and thumb at the base of the middle finger."},
+    "Shukatunda": {"desc": "Meaning 'parrot's beak.' A specific gesture used to represent a hook, a parrot's beak, or shooting an arrow."},
+    "Kartarimukha": {"desc": "Meaning 'scissor's face.' Represents scissors, separation, the corner of an eye, or two different things. Formed by extending the index and middle fingers."},
+    "Mrigashirsha": {"desc": "Meaning 'deer's head.' Represents a deer, costumes, or the cheeks of a person. Formed by extending the thumb and pinky finger upwards."},
+    "Ardhachandra": {"desc": "Meaning 'half-moon.' Represents the sky, a large platter, or one's waist. Formed like Pataka but with the thumb extended outwards."},
+    "Pataka": {"desc": "The foundational 'flag' gesture. Signifies blessings, stopping, a forest, or the start of a dance. Formed by keeping all fingers straight and together."},
+    "Hamsasya": {"desc": "Meaning 'swan's beak.' Represents softness, tying a knot, giving instruction, or picking up a delicate object. Formed by joining the tips of the thumb and index finger."},
+    "Tripataka": {"desc": "Meaning 'three parts of a flag.' A variation of Pataka used for crowns, trees, or drawing lines. Formed like Pataka, but with the ring finger bent."},
+    "Mayura": {"desc": "Meaning 'peacock.' Represents a peacock's beak or neck, or the act of writing. Formed by joining the tips of the thumb and ring finger."},
+    "Suchimukha": {"desc": "Meaning 'needle face.' Represents a needle, the number one, pointing, or demonstration. Formed by extending the index finger upwards from a fist."},
+    "Shikara": {"desc": "Meaning 'peak' or 'spire.' A 'thumbs-up' gesture used to hold a bow or express determination. Formed by raising the thumb from a fist."},
+    "Trishula": {"desc": "Meaning 'trident.' Represents the weapon of Lord Shiva or the number three. Formed by raising the index, middle, and ring fingers."},
+    "Ardhapataka": {"desc": "Meaning 'half-flag.' Represents a knife, a dagger, a tower, or the number two. Formed by extending the index and middle fingers together."},
+    "Arala": {"desc": "Meaning 'bent.' Represents drinking poison or nectar, or a violent wind. Formed by bending the index finger from the Pataka pose."},
+    "Bhramara": {"desc": "Meaning 'bee.' Represents a bee, yoga, a wing, or plucking flowers. Formed by joining the thumb and middle finger, with the index finger curled inwards."},
+    "Padmakosha": {"desc": "Meaning 'lotus bud.' Represents a fruit, a ball-like object, or a flower bud. Formed by cupping the hand with all fingers bent and slightly apart."},
+    "Mushti": {"desc": "The standard 'fist.' Represents steadiness, grasping an object, combat, or a character's strength. Formed by closing all fingers with the thumb placed over them."}
 }
 
 # --- UI Helper Functions ---
@@ -102,8 +101,6 @@ def get_mudra_info(lmList, hand_handedness):
         scores = [1 - (dist_thumb_index / 50), 1 - (dist_thumb_middle / 50)]
         if min(scores) > 0: return "Kataka Mukha", min(scores)
 
-    # Hamsasya (FIXED to be more specific and avoid Arala conflict)
-    # Condition: Thumb/index tips are close, AND ALL FOUR other fingers are up.
     if dist_thumb_index < 45 and fingers[2] == 1 and fingers[3] == 1 and fingers[4] == 1:
         score = 1 - (dist_thumb_index / 40)
         return "Hamsasya", score
@@ -150,13 +147,9 @@ def get_mudra_info(lmList, hand_handedness):
         score = 1 - (dist_index_middle / 40)
         return "Ardhapataka", score
     
-    # --- CONSOLIDATED FIST LOGIC FOR ALL VARIATIONS (FIXED) ---
     if fingers == [0, 0, 0, 0, 0]:
-        # Padmakosha (Lotus Bud): cupped hand, tips are further from wrist
         if abs(lmList[0][2] - lmList[8][2]) > 100:
             return "Padmakosha", min(1.0, (abs(lmList[0][2] - lmList[8][2]) - 100) / 50)
-            
-        # Default fist is Mushti
         return "Mushti", 1.0
     
     return "Unknown Mudra", 0.0
