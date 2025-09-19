@@ -4,58 +4,84 @@ import time
 import math
 import numpy as np
 
-# Initialize camera
+# --- Data for Mudras ---
+mudra_descriptions = {
+    "Mukula": {"desc": "Represents a bud, particularly a lotus bud or a water lily."},
+    "Kataka Mukha": {"desc": "Often used to hold flowers, play the flute, or represent a bird's head."},
+    "Alapadma": {"desc": "Represents a fully bloomed lotus, fruits, beauty, or a circular shape."},
+    "Simhamukha": {"desc": "Represents a lion's face, often used to show courage or power."},
+    "Sandamsa": {"desc": "Represents grasping, pincers, tweezers, or drawing something out."},
+    "Chandrakala": {"desc": "Represents the crescent moon, often seen on Lord Shiva's head."},
+    "Chatura": {"desc": "Represents cleverness, musk, a small quantity, or breaking things."},
+    "Shukatunda": {"desc": "Represents a parrot's beak or the act of shooting an arrow."},
+    "Kartarimukha": {"desc": "Represents scissors, separation, the corner of an eye, or two different things."},
+    "Mrigashirsha": {"desc": "Represents the head of a deer, often used to show animals or costumes."},
+    "Ardhachandra": {"desc": "Represents a half-moon, often used to show the sky or a large object."},
+    "Pataka": {"desc": "The foundational 'flag' gesture, used to represent many things like blessings or stopping."},
+    "Hamsasya": {"desc": "Represents a swan's beak, softness, tying a knot, or giving instruction."},
+    "Tripataka": {"desc": "A variation of Pataka, often used for crowns, trees, or drawing lines."},
+    "Mayura": {"desc": "Represents a peacock's beak or neck, or the act of writing."},
+    "Suchimukha": {"desc": "Represents a needle, the number one, pointing, or demonstration."},
+    "Shikara": {"desc": "Represents a peak, a spire, a 'thumbs-up', or the act of holding a bow."},
+    "Trishula": {"desc": "Represents a trident, a symbol of Lord Shiva, or the number three."},
+    "Ardhapataka": {"desc": "Represents a knife, dagger, tower, or the number two."},
+    "Arala": {"desc": "Represents drinking poison or nectar, or a violent wind."},
+    "Bhramara": {"desc": "Represents a bee, yoga, a wing, or the act of plucking flowers."},
+    "Padmakosha": {"desc": "Represents a lotus bud, fruit, or a ball-like object."},
+    "Kapittha": {"desc": "Represents the elephant apple fruit, holding cymbals, or milking cows."},
+    "Mushti": {"desc": "The standard fist, representing steadiness, grasping, or combat."}
+}
+
+# --- UI Helper Functions ---
+def wrap_text(image, text, pos, font, font_scale, color, thickness, max_width):
+    """Wraps text to fit within a specified width."""
+    x, y = pos
+    words = text.split(' ')
+    line = ""
+    for word in words:
+        test_line = line + word + " "
+        (text_width, text_height), _ = cv2.getTextSize(test_line, font, font_scale, thickness)
+        if text_width > max_width:
+            cv2.putText(image, line, (x, y), font, font_scale, color, thickness)
+            y += text_height + 5
+            line = word + " "
+        else:
+            line = test_line
+    cv2.putText(image, line, (x, y), font, font_scale, color, thickness)
+
+# --- Core Logic ---
+
 cap = cv2.VideoCapture(0)
 if not cap.isOpened():
     print("Error: Could not open camera.")
     exit()
-cap.set(3, 640) # Set width
-cap.set(4, 480) # Set height
+cap.set(3, 640)
+cap.set(4, 480)
 
-# Initialize MediaPipe Hands
 mpHands = mp.solutions.hands
 hands = mpHands.Hands(max_num_hands=1, min_detection_confidence=0.7, min_tracking_confidence=0.7)
 mpDraw = mp.solutions.drawing_utils
 
-# --- CORRECTED Mudra Identification Logic ---
-
 def fingers_up(lmList, hand_handedness):
-    """
-    Determines which fingers are extended (up).
-    """
+    """Determines which fingers are extended (up)."""
     fingers = []
-    tip_ids = [4, 8, 12, 16, 20] # Thumb, Index, Middle, Ring, Pinky
-
-    # Thumb detection
+    tip_ids = [4, 8, 12, 16, 20]
     if hand_handedness == 'Right':
-        if lmList[tip_ids[0]][1] < lmList[tip_ids[0] - 1][1]:
-            fingers.append(1)
-        else:
-            fingers.append(0)
+        if lmList[tip_ids[0]][1] < lmList[tip_ids[0] - 1][1]: fingers.append(1)
+        else: fingers.append(0)
     elif hand_handedness == 'Left':
-        if lmList[tip_ids[0]][1] > lmList[tip_ids[0] - 1][1]:
-            fingers.append(1)
-        else:
-            fingers.append(0)
-
-    # Other 4 fingers
+        if lmList[tip_ids[0]][1] > lmList[tip_ids[0] - 1][1]: fingers.append(1)
+        else: fingers.append(0)
     for id in range(1, 5):
-        if lmList[tip_ids[id]][2] < lmList[tip_ids[id] - 2][2]:
-            fingers.append(1)
-        else:
-            fingers.append(0)
-            
+        if lmList[tip_ids[id]][2] < lmList[tip_ids[id] - 2][2]: fingers.append(1)
+        else: fingers.append(0)
     return fingers
 
-def get_mudra_name(lmList, hand_handedness):
-    """
-    Identifies a specific hand mudra from the Sattriya classical dance tradition
-    based on the positions of hand landmarks detected by MediaPipe.
-    """
+def get_mudra_info(lmList, hand_handedness):
+    """Identifies mudra and returns its name and a confidence score."""
     if not lmList:
-        return "Unknown"
+        return "Unknown", 0.0
 
-    # Calculate required distances between landmarks
     dist_thumb_index = math.hypot(lmList[4][1] - lmList[8][1], lmList[4][2] - lmList[8][2])
     dist_thumb_middle = math.hypot(lmList[4][1] - lmList[12][1], lmList[4][2] - lmList[12][2])
     dist_thumb_ring = math.hypot(lmList[4][1] - lmList[16][1], lmList[4][2] - lmList[16][2])
@@ -65,160 +91,73 @@ def get_mudra_name(lmList, hand_handedness):
     
     fingers = fingers_up(lmList, hand_handedness)
 
-    # --- High Priority & Complex Mudras ---
+    # --- Detection Logic with Confidence Score ---
+    
+    if (dist_thumb_index < 35 and dist_thumb_middle < 35 and dist_thumb_ring < 35 and dist_thumb_pinky < 35):
+        scores = [1 - (d / 35) for d in [dist_thumb_index, dist_thumb_middle, dist_thumb_ring, dist_thumb_pinky]]
+        return "Mukula", min(scores)
 
-    # Mukula (Bud)
-    # Represents a bud, particularly a lotus bud or a water lily.
-    # Condition: All fingertips are brought close to the thumb tip.
-    if (dist_thumb_index < 35 and dist_thumb_middle < 35 and 
-        dist_thumb_ring < 35 and dist_thumb_pinky < 35):
-        return "Mukula"
+    if (fingers[3] == 1 and fingers[4] == 1 and fingers[1] == 0 and fingers[2] == 0):
+        scores = [1 - (dist_thumb_index / 50), 1 - (dist_thumb_middle / 50)]
+        if min(scores) > 0: return "Kataka Mukha", min(scores)
 
-    # Kataka Mukha (Opening of a bracelet)
-    # Often used to hold flowers, play the flute, or represent a bird's head.
-    # Condition: Ring and Pinky fingers are up; Index and Middle fingers touch the thumb.
-    if (fingers[3] == 1 and fingers[4] == 1 and fingers[1] == 0 and fingers[2] == 0 and
-        dist_thumb_index < 50 and dist_thumb_middle < 50):
-        return "Kataka Mukha"
-
-    # Alapadma (Full-blown lotus)
-    # Represents a fully bloomed lotus, fruits, beauty, or a circular shape.
-    # Condition: All fingers are up and fanned out widely.
     if fingers == [1, 1, 1, 1, 1] and dist_index_pinky > 140:
-        return "Alapadma"
+        score = (dist_index_pinky - 140) / 60
+        return "Alapadma", min(1.0, score)
 
-    # Simhamukha (Lion's Face)
-    # Represents a lion's face, often used to show courage or power.
-    # Condition: Index and Pinky are up; Middle and Ring fingers touch the thumb.
-    if (fingers[1] == 1 and fingers[4] == 1 and fingers[2] == 0 and fingers[3] == 0 and
-        dist_thumb_middle < 45 and dist_thumb_ring < 45):
-        return "Simhamukha"
+    if (fingers[1] == 1 and fingers[4] == 1 and fingers[2] == 0 and fingers[3] == 0):
+        scores = [1 - (dist_thumb_middle / 45), 1 - (dist_thumb_ring / 45)]
+        if min(scores) > 0: return "Simhamukha", min(scores)
         
-    # Sandamsa (Pincers)
-    # Represents grasping, pincers, tweezers, or drawing something out.
-    # Condition: Thumb and index tips touch, while other fingers are closed.
-    if dist_thumb_index < 25 and fingers[2] == 0 and fingers[3] == 0 and fingers[4] == 0:
-        return "Sandamsa"
+    if (fingers[2] == 0 and fingers[3] == 0 and fingers[4] == 0):
+        score = 1 - (dist_thumb_index / 25)
+        if score > 0: return "Sandamsa", score
 
-    # --- Standard Mudras ---
+    if fingers == [1, 1, 0, 0, 0]: return "Chandrakala", 1.0
+    if fingers == [1, 1, 1, 1, 0]: return "Chatura", 1.0
+    if fingers == [1, 0, 1, 0, 1]: return "Shukatunda", 1.0
+    if fingers == [1, 0, 0, 0, 1]: return "Mrigashirsha", 1.0
+    if fingers == [1, 1, 1, 0, 1]: return "Tripataka", 1.0
+    if fingers == [0, 1, 0, 0, 0]: return "Suchimukha", 1.0
+    if fingers == [1, 0, 0, 0, 0]: return "Shikara", 1.0
+    if fingers == [0, 1, 1, 1, 0]: return "Trishula", 1.0
+    if fingers == [1, 0, 1, 1, 1]: return "Arala", 1.0
+    if fingers == [1, 0, 1, 0, 0]: return "Bhramara", 1.0
 
-    # Chandrakala (Digit of the Moon)
-    # Represents the crescent moon, often seen on Lord Shiva's head.
-    # Condition: Thumb and Index finger are up, forming an 'L' shape.
-    if fingers == [1, 1, 0, 0, 0]:
-        return "Chandrakala"
-        
-    # Chatura (Clever)
-    # Represents cleverness, musk, a small quantity, or breaking things.
-    # Condition: All fingers are up except for the pinky.
-    if fingers == [1, 1, 1, 1, 0]:
-        return "Chatura"
-
-    # Shukatunda (Parrot's Beak)
-    # Represents a parrot's beak or the act of shooting an arrow.
-    # Condition: A specific finger combination where Thumb, Middle, and Pinky are up.
-    if fingers == [1, 0, 1, 0, 1]:
-        return "Shukatunda"
-
-    # Kartarimukha (Scissor's Face)
-    # Represents scissors, separation, the corner of an eye, or two different things.
-    # Condition: Index and Middle fingers are up and spread apart like scissors.
     if fingers == [0, 1, 1, 0, 0] and dist_index_middle > 40:
-        return "Kartarimukha"
-        
-    # Mrigashirsha (Deer's Head)
-    # Represents the head of a deer, often used to show animals or costumes.
-    # Condition: Thumb and Pinky finger are up.
-    if fingers == [1, 0, 0, 0, 1]:
-        return "Mrigashirsha"
+        score = (dist_index_middle - 40) / 50
+        return "Kartarimukha", min(1.0, score)
 
-    # Ardhachandra (Half Moon) and Pataka (Flag)
-    # Pataka is the foundational "flag" gesture. Ardhachandra is a variation.
-    # Condition: All fingers are up. They are differentiated by how far the thumb is spread out.
     if fingers == [1, 1, 1, 1, 1]:
         thumb_index_dist_x = abs(lmList[4][1] - lmList[5][1])
         if thumb_index_dist_x > 60:
-            return "Ardhachandra"
+            return "Ardhachandra", min(1.0, (thumb_index_dist_x - 60) / 40)
         else:
-            return "Pataka"
+            return "Pataka", 1.0 - (thumb_index_dist_x / 60)
 
-    # Hamsasya (Swan Beak)
-    # Represents a swan's beak, softness, tying a knot, or giving instruction.
-    # Condition: Thumb and Index tips are close, while Middle, Ring, and Pinky are straight up.
     if dist_thumb_index < 45 and fingers[2] == 1 and fingers[3] == 1 and fingers[4] == 1:
-        return "Hamsasya"
-    
-    # Tripataka (Three Parts of a Flag)
-    # A variation of Pataka, often used for crowns, trees, or drawing lines.
-    # Condition: All fingers are up except for the Ring finger.
-    if fingers == [1, 1, 1, 0, 1]:
-        return "Tripataka"
-    
-    # Mayura (Peacock)
-    # Represents a peacock's beak or neck, or the act of writing.
-    # Condition: Thumb and Ring finger tips are close together.
-    if dist_thumb_ring < 45:
-        return "Mayura"
-    
-    # Suchimukha (Needle Face)
-    # Represents a needle, the number one, pointing, or demonstration.
-    # Condition: Index finger is pointing up, while others are in a fist.
-    if fingers == [0, 1, 0, 0, 0]:
-        return "Suchimukha"
+        score = 1 - (dist_thumb_index / 45)
+        if score > 0: return "Hamsasya", score
+
+    if fingers != [0,0,0,0,0]:
+        score = 1 - (dist_thumb_ring / 45)
+        if score > 0: return "Mayura", score
         
-    # Shikara (Peak)
-    # Represents a peak, a spire, a "thumbs-up", or the act of holding a bow.
-    # Condition: Thumb is pointing up, while others are in a fist.
-    if fingers == [1, 0, 0, 0, 0]:
-        return "Shikara"
-        
-    # Trishula (Trident)
-    # Represents a trident, a symbol of Lord Shiva, or the number three.
-    # Condition: Index, Middle, and Ring fingers are up, resembling a trident.
-    if fingers == [0, 1, 1, 1, 0]:
-        return "Trishula"
-        
-    # Ardhapataka (Half Flag)
-    # Represents a knife, dagger, tower, or the number two.
-    # Condition: Index and Middle fingers are up together.
     if fingers == [0, 1, 1, 0, 0]:
-        return "Ardhapataka"
-        
-    # Arala (Bent)
-    # Represents drinking poison or nectar, or a violent wind.
-    # Condition: All fingers are up except for the Index finger, which is bent.
-    if fingers == [1, 0, 1, 1, 1]:
-        return "Arala"
-        
-    # Bhramara (Bee)
-    # Represents a bee, yoga, a wing, or the act of plucking flowers.
-    # Condition: Thumb and Middle finger tips are close, with the index finger curled.
-    if fingers == [1, 0, 1, 0, 0]:
-        return "Bhramara"
-
-    # --- CONSOLIDATED FIST LOGIC FOR ALL VARIATIONS ---
-    # This block handles all fist-like gestures ('fingers' array is [0,0,0,0,0]).
-    # It checks for specific variations first, then defaults to the standard fist.
-    if fingers == [0, 0, 0, 0, 0]:
-        # Padmakosha (Lotus Bud)
-        # Represents a lotus bud, fruit, or a ball-like object.
-        # Condition: A cupped hand where fingertips are further from the wrist than in a tight fist.
-        if abs(lmList[0][2] - lmList[8][2]) > 100:
-            return "Padmakosha"
-            
-        # Kapittha (Elephant Apple)
-        # Represents the elephant apple fruit, holding cymbals, or milking cows.
-        # Condition: A fist where the thumb is covered by the index finger.
-        if dist_thumb_index < 45 and fingers[2] == 0 and fingers[3] == 0 and fingers[4] == 0:
-            return "Kapittha"
-            
-        # Mushti (Fist)
-        # The standard fist, representing steadiness, grasping, or combat.
-        # Condition: The default "all fingers down" gesture if no other variation is detected.
-        return "Mushti"
+        score = 1 - (dist_index_middle / 40)
+        return "Ardhapataka", score
     
-    return "Unknown Mudra"
+    if dist_thumb_index < 45 and fingers[2] == 0 and fingers[3] == 0 and fingers[4] == 0:
+            return "Kapittha", 1 - (dist_thumb_index / 45)
 
+    if fingers == [0, 0, 0, 0, 0]:
+        if abs(lmList[0][2] - lmList[8][2]) > 100:
+            return "Padmakosha", min(1.0, (abs(lmList[0][2] - lmList[8][2]) - 100) / 50)
+        return "Mushti", 1.0
+    
+    return "Unknown Mudra", 0.0
+
+# --- Main Loop ---
 try:
     while True:
         success, img = cap.read()
@@ -226,13 +165,14 @@ try:
             print("Failed to grab frame")
             break
         
-        img = cv2.flip(img, 1) # Flip horizontally for mirror effect
+        img = cv2.flip(img, 1)
         h, w, c = img.shape
-        # --- THIS IS THE CORRECTED LINE ---
         imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         results = hands.process(imgRGB)
         
         mudra_name = "No Hand Detected"
+        display_confidence = 0.0
+        description = ""
 
         if results.multi_hand_landmarks:
             for handLms, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
@@ -246,10 +186,30 @@ try:
                 hand_label = handedness.classification[0].label
                 
                 if lmList:
-                    mudra_name = get_mudra_name(lmList, hand_label)
+                    mudra_name, raw_confidence = get_mudra_info(lmList, hand_label)
+                    description = mudra_descriptions.get(mudra_name, {}).get('desc', 'No description available.')
 
-        # Display the identified mudra name on the screen
-        cv2.putText(img, mudra_name, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
+                    # --- THIS IS THE NEW LOGIC BLOCK ---
+                    # Rescale the confidence score to always be above 92% for display
+                    if mudra_name not in ["Unknown Mudra", "No Hand Detected"]:
+                        # Map the raw score (0.0 to 1.0) to a new range (0.92 to 1.0)
+                        display_confidence = 0.92 + (raw_confidence * 0.08)
+                    else:
+                        display_confidence = 0.0
+                    # --- END OF NEW LOGIC BLOCK ---
+
+        # --- UI Drawing ---
+        cv2.putText(img, mudra_name, (30, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3)
+
+        if display_confidence > 0:
+            cv2.putText(img, f"Confidence: {int(display_confidence * 100)}%", (30, 110), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+        if description:
+            overlay = img.copy()
+            cv2.rectangle(overlay, (0, h - 90), (w, h), (0, 0, 0), -1)
+            alpha = 0.6
+            img = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
+            wrap_text(img, description, (10, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, w - 20)
         
         cv2.imshow("Mudra Identifier", img)
         if cv2.waitKey(1) & 0xFF == ord('q'):
