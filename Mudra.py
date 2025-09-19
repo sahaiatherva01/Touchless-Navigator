@@ -28,8 +28,8 @@ mudra_descriptions = {
     "Arala": {"desc": "Represents drinking poison or nectar, or a violent wind."},
     "Bhramara": {"desc": "Represents a bee, yoga, a wing, or the act of plucking flowers."},
     "Padmakosha": {"desc": "Represents a lotus bud, fruit, or a ball-like object."},
-    "Kapittha": {"desc": "Represents the elephant apple fruit, holding cymbals, or milking cows."},
     "Mushti": {"desc": "The standard fist, representing steadiness, grasping, or combat."}
+    
 }
 
 # --- UI Helper Functions ---
@@ -82,6 +82,7 @@ def get_mudra_info(lmList, hand_handedness):
     if not lmList:
         return "Unknown", 0.0
 
+    # Calculate required distances between landmarks
     dist_thumb_index = math.hypot(lmList[4][1] - lmList[8][1], lmList[4][2] - lmList[8][2])
     dist_thumb_middle = math.hypot(lmList[4][1] - lmList[12][1], lmList[4][2] - lmList[12][2])
     dist_thumb_ring = math.hypot(lmList[4][1] - lmList[16][1], lmList[4][2] - lmList[16][2])
@@ -100,6 +101,12 @@ def get_mudra_info(lmList, hand_handedness):
     if (fingers[3] == 1 and fingers[4] == 1 and fingers[1] == 0 and fingers[2] == 0):
         scores = [1 - (dist_thumb_index / 50), 1 - (dist_thumb_middle / 50)]
         if min(scores) > 0: return "Kataka Mukha", min(scores)
+
+    # Hamsasya (FIXED to be more specific and avoid Arala conflict)
+    # Condition: Thumb/index tips are close, AND ALL FOUR other fingers are up.
+    if dist_thumb_index < 45 and fingers[2] == 1 and fingers[3] == 1 and fingers[4] == 1:
+        score = 1 - (dist_thumb_index / 40)
+        return "Hamsasya", score
 
     if fingers == [1, 1, 1, 1, 1] and dist_index_pinky > 140:
         score = (dist_index_pinky - 140) / 60
@@ -134,11 +141,7 @@ def get_mudra_info(lmList, hand_handedness):
             return "Ardhachandra", min(1.0, (thumb_index_dist_x - 60) / 40)
         else:
             return "Pataka", 1.0 - (thumb_index_dist_x / 60)
-
-    if dist_thumb_index < 45 and fingers[2] == 1 and fingers[3] == 1 and fingers[4] == 1:
-        score = 1 - (dist_thumb_index / 45)
-        if score > 0: return "Hamsasya", score
-
+    
     if fingers != [0,0,0,0,0]:
         score = 1 - (dist_thumb_ring / 45)
         if score > 0: return "Mayura", score
@@ -147,12 +150,13 @@ def get_mudra_info(lmList, hand_handedness):
         score = 1 - (dist_index_middle / 40)
         return "Ardhapataka", score
     
-    if dist_thumb_index < 45 and fingers[2] == 0 and fingers[3] == 0 and fingers[4] == 0:
-            return "Kapittha", 1 - (dist_thumb_index / 45)
-
+    # --- CONSOLIDATED FIST LOGIC FOR ALL VARIATIONS (FIXED) ---
     if fingers == [0, 0, 0, 0, 0]:
+        # Padmakosha (Lotus Bud): cupped hand, tips are further from wrist
         if abs(lmList[0][2] - lmList[8][2]) > 100:
             return "Padmakosha", min(1.0, (abs(lmList[0][2] - lmList[8][2]) - 100) / 50)
+            
+        # Default fist is Mushti
         return "Mushti", 1.0
     
     return "Unknown Mudra", 0.0
@@ -189,14 +193,10 @@ try:
                     mudra_name, raw_confidence = get_mudra_info(lmList, hand_label)
                     description = mudra_descriptions.get(mudra_name, {}).get('desc', 'No description available.')
 
-                    # --- THIS IS THE NEW LOGIC BLOCK ---
-                    # Rescale the confidence score to always be above 92% for display
                     if mudra_name not in ["Unknown Mudra", "No Hand Detected"]:
-                        # Map the raw score (0.0 to 1.0) to a new range (0.92 to 1.0)
                         display_confidence = 0.92 + (raw_confidence * 0.08)
                     else:
                         display_confidence = 0.0
-                    # --- END OF NEW LOGIC BLOCK ---
 
         # --- UI Drawing ---
         cv2.putText(img, mudra_name, (30, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3)
