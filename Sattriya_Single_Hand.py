@@ -95,21 +95,6 @@ def get_mudra_info(lmList, hand_handedness):
 
     fingers = fingers_up(lmList, hand_handedness)
 
-    # ════════════════════════════════════════════════════════════
-    # TAMRACHUDA — checked FIRST before Chandrakala/Suchimukha/Mushti
-    #
-    # Finger pattern: thumb=1 (out), index=1 (raised but BENT/hooked),
-    #                 middle=0, ring=0, pinky=0
-    #
-    # Key distinction:
-    #   vs Chandrakala  → same finger pattern [1,1,0,0,0] BUT
-    #                     Tamrachuda: index PIP angle < 155° (bent/hooked)
-    #                     Chandrakala: index PIP angle >= 155° (straight)
-    #   vs Suchimukha   → Suchimukha has thumb DOWN (fingers[0]==0)
-    #                     Tamrachuda has thumb UP/OUT (fingers[0]==1)
-    #   vs Mushti       → Mushti has ALL fingers down (fingers[1]==0)
-    #                     Tamrachuda has index raised (fingers[1]==1)
-    # ════════════════════════════════════════════════════════════
     if (fingers[0] == 1 and fingers[1] == 1 and
             fingers[2] == 0 and fingers[3] == 0 and fingers[4] == 0):
         # Measure how bent the index finger is at PIP joint (lm 5-6-8)
@@ -223,3 +208,4 @@ finally:
     cap.release()
 
     cv2.destroyAllWindows()
+
